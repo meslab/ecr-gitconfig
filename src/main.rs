@@ -23,10 +23,19 @@ async fn main() -> io::Result<()> {
 
     let args = Args::parse();
 
-    let mut file = File::create("/tmp/gitconfig")?;
+    let mut file = File::create(&args.file)?;
 
     for u in ["app", "sandbox", "sandbox-external"].iter() {
-        writeln!(file, "[credential \"https://git-codecommit.eu-central-1.amazonaws.com/v1/repos/{}.git\"]\n  helper = !aws codecommit credential-helper $@ --profile cloud-prod-controlplane\n  useHttpPath = true", u)?;
+        writeln!(
+            file,
+            "[credential \"https://git-codecommit.eu-central-1.amazonaws.com/v1/repos/{}.git\"]",
+            u
+        )?;
+        writeln!(
+            file,
+            "  helper = !aws codecommit credential-helper $@ --profile cloud-prod-controlplane"
+        )?;
+        writeln!(file, "  useHttpPath = true")?;
     }
 
     let profiles = ["cloud-prod-controlplane", "infra"];
@@ -42,15 +51,25 @@ async fn main() -> io::Result<()> {
                 .arg("--profile")
                 .arg(p)
                 .arg("--query")
-                .arg("repositories[?contains(repositoryName,`-cirbi`) || contains(repositoryName,`-lb`) || contains(repositoryName,`longboat`)].repositoryName")
+                .arg("repositories[?(contains(repositoryName,`-cirbi`) || contains(repositoryName,`-lb`) || contains(repositoryName,`longboat`)) && !contains(repositoryName,`lb1`)].repositoryName")
                 .arg("--output")
                 .arg("text")
                 .output()
                 .expect("failed to execute process");
 
             let repositories = String::from_utf8_lossy(&output.stdout);
-            for u in repositories.lines() {
-                writeln!(file, "[credential \"https://git-codecommit.{}.amazonaws.com/v1/repos/{}.git\"]\n  helper = !aws codecommit credential-helper $@ --profile {}\n  useHttpPath = true", r, u, p)?;
+            for u in repositories.split_whitespace() {
+                writeln!(
+                    file,
+                    "[credential \"https://git-codecommit.{}.amazonaws.com/v1/repos/{}.git\"]",
+                    r, u
+                )?;
+                writeln!(
+                    file,
+                    "  helper = !aws codecommit credential-helper $@ --profile {}",
+                    p
+                )?;
+                writeln!(file, "  useHttpPath = true")?;
             }
         }
     }
