@@ -3,6 +3,7 @@ use log::info;
 use std::fs::File;
 use std::io::{self, Write};
 mod codecommit;
+use git2::Config;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -30,11 +31,30 @@ struct Args {
     #[clap(short, long, default_values = &["eu-central-1", "us-east-2"])]
     regions: Vec<String>,
 
-    #[clap(short, long, default_value = "anton.sidorov@advarra.com")]
-    email: String,
+    #[clap(short, long, default_value = None)]
+    email: Option<String>,
 
-    #[clap(short, long, default_value = "Anton Sidorov")]
-    name: String,
+    #[clap(short, long, default_value = None)]
+    name: Option<String>,
+}
+
+fn write_gitconfig(
+    file: &mut File,
+    repo: &str,
+    region: &str,
+    profile: &str,
+) -> Result<(), std::io::Error> {
+    writeln!(
+        file,
+        "[credential \"https://git-codecommit.{}.amazonaws.com/v1/repos/{}.git\"]",
+        region, repo
+    )?;
+    writeln!(
+        file,
+        "\thelper = !aws codecommit credential-helper $@ --profile {}",
+        profile
+    )?;
+    writeln!(file, "\tuseHttpPath = true")
 }
 
 #[tokio::main]
@@ -43,29 +63,34 @@ async fn main() -> io::Result<()> {
 
     let args = Args::parse();
 
+    let cfg = Config::open_default().unwrap();
+    let binding = cfg.get_string("user.name").unwrap();
+    let username = match &args.name {
+        Some(name) => name,
+        None => &binding,
+    };
+    let binding = cfg.get_string("user.email").unwrap();
+    let email = match &args.email {
+        Some(email) => email,
+        None => &binding,
+    };
+
     let mut file = File::create(&args.file)?;
 
-    let mut include = args.include.clone();
-    include.extend(args.base.clone());
-
-    for p in args.profiles.iter() {
-        for r in args.regions.iter() {
-            let client = codecommit::initialize_client(r, p).await;
+    for profile in args.profiles.iter() {
+        for region in args.regions.iter() {
+            let client = codecommit::initialize_client(&region, &profile).await;
+            let base_repositories =
+                codecommit::list_exact_repositories(&client, &args.base, &args.exclude).await;
+            info!("Base repositories: {:?}", base_repositories);
             let repositories =
-                codecommit::list_repositories(&client, &include, &args.exclude).await;
+                codecommit::list_repositories(&client, &args.include, &args.exclude).await;
             info!("Repositories: {:?}", repositories);
-            for u in repositories.unwrap() {
-                writeln!(
-                    file,
-                    "[credential \"https://git-codecommit.{}.amazonaws.com/v1/repos/{}.git\"]",
-                    r, u
-                )?;
-                writeln!(
-                    file,
-                    "\thelper = !aws codecommit credential-helper $@ --profile {}",
-                    p
-                )?;
-                writeln!(file, "\tuseHttpPath = true")?;
+            for repo in base_repositories.unwrap() {
+                write_gitconfig(&mut file, &repo, region, profile).expect("Cannt write to file")
+            }
+            for repo in repositories.unwrap() {
+                write_gitconfig(&mut file, &repo, region, profile).expect("Cannt write to file")
             }
         }
     }
@@ -74,11 +99,7 @@ async fn main() -> io::Result<()> {
         file,
         "[credential]\n\thelper = !aws codecommit credential-helper $@\n\tUseHttpPath = true"
     )?;
-    writeln!(
-        file,
-        "[user]\n\temail = {}\n\tname = {}",
-        &args.email, &args.name
-    )?;
+    writeln!(file, "[user]\n\temail = {}\n\tname = {}", &email, &username)?;
 
     Ok(())
 }
