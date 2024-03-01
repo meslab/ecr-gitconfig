@@ -18,3 +18,24 @@ pub async fn initialize_client(region: &str, profile: &str) -> Client {
 
     Client::from_conf(config)
 }
+
+pub async fn list_repositories(
+    client: &Client,
+    in_: &Vec<String>,
+    out: &Vec<String>,
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let mut repos = Vec::new();
+    let mut repos_stream = client.list_repositories().into_paginator().send();
+    while let Some(output) = repos_stream.next().await {
+        for repo in output.unwrap().repositories.unwrap() {
+            let repo_name = repo.repository_name.clone().expect("No repo name");
+            if !out.iter().any(|x| repo_name.contains(x))
+                && in_.iter().any(|x| repo_name.contains(x))
+            {
+                repos.push(repo_name);
+            }
+        }
+    }
+    debug!("Repositories: {:?}", repos);
+    Ok(repos)
+}

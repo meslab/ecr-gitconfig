@@ -2,7 +2,6 @@ use clap::Parser;
 use log::info;
 use std::fs::File;
 use std::io::{self, Write};
-use std::process::Command;
 mod codecommit;
 
 #[derive(Parser)]
@@ -15,6 +14,21 @@ mod codecommit;
 struct Args {
     #[clap(short, long, default_value = "/tmp/gitconfig")]
     file: String,
+
+    #[clap(short, long, default_values = &["app","sandbox", "sandbox-external"])]
+    base: Vec<String>,
+
+    #[clap(short, long, default_values = &["cirbi", "lb", "longboat"])]
+    include: Vec<String>,
+
+    #[clap(short = 'x', long, default_values = &["lb1"])]
+    exclude: Vec<String>,
+
+    #[clap(short, long, default_value = "anton.sidorov@advarra.com")]
+    email: String,
+
+    #[clap(short, long, default_value = "Anton Sidorov")]
+    name: String,
 }
 
 #[tokio::main]
@@ -25,7 +39,7 @@ async fn main() -> io::Result<()> {
 
     let mut file = File::create(&args.file)?;
 
-    for u in ["app", "sandbox", "sandbox-external"].iter() {
+    for u in args.base.iter() {
         writeln!(
             file,
             "[credential \"https://git-codecommit.eu-central-1.amazonaws.com/v1/repos/{}.git\"]",
@@ -33,32 +47,24 @@ async fn main() -> io::Result<()> {
         )?;
         writeln!(
             file,
-            "  helper = !aws codecommit credential-helper $@ --profile cloud-prod-controlplane"
+            "\thelper = !aws codecommit credential-helper $@ --profile cloud-prod-controlplane"
         )?;
-        writeln!(file, "  useHttpPath = true")?;
+        writeln!(file, "\tuseHttpPath = true")?;
     }
 
     let profiles = ["cloud-prod-controlplane", "infra"];
     let regions = ["eu-central-1", "us-east-2"];
 
+    //let in_ = vec!["-cirbi", "-lb", "longboat"];
+    //let out = vec!["lb1"];
+
     for p in profiles.iter() {
         for r in regions.iter() {
-            let output = Command::new("aws")
-                .arg("codecommit")
-                .arg("list-repositories")
-                .arg("--region")
-                .arg(r)
-                .arg("--profile")
-                .arg(p)
-                .arg("--query")
-                .arg("repositories[?(contains(repositoryName,`-cirbi`) || contains(repositoryName,`-lb`) || contains(repositoryName,`longboat`)) && !contains(repositoryName,`lb1`)].repositoryName")
-                .arg("--output")
-                .arg("text")
-                .output()
-                .expect("failed to execute process");
-
-            let repositories = String::from_utf8_lossy(&output.stdout);
-            for u in repositories.split_whitespace() {
+            let client = codecommit::initialize_client(r, p).await;
+            let repositories =
+                codecommit::list_repositories(&client, &args.include, &args.exclude).await;
+            info!("Repositories: {:?}", repositories);
+            for u in repositories.unwrap() {
                 writeln!(
                     file,
                     "[credential \"https://git-codecommit.{}.amazonaws.com/v1/repos/{}.git\"]",
@@ -66,21 +72,22 @@ async fn main() -> io::Result<()> {
                 )?;
                 writeln!(
                     file,
-                    "  helper = !aws codecommit credential-helper $@ --profile {}",
+                    "\thelper = !aws codecommit credential-helper $@ --profile {}",
                     p
                 )?;
-                writeln!(file, "  useHttpPath = true")?;
+                writeln!(file, "\tuseHttpPath = true")?;
             }
         }
     }
 
     writeln!(
         file,
-        "[credential]\n  helper = !aws codecommit credential-helper $@\n  UseHttpPath = true"
+        "[credential]\n\thelper = !aws codecommit credential-helper $@\n\tUseHttpPath = true"
     )?;
     writeln!(
         file,
-        "[user]\n  email = anton.sidorov@advarra.com\n  name = Anton Sidorov"
+        "[user]\n\temail = {}\n\tname = {}",
+        &args.email, &args.name
     )?;
 
     Ok(())
