@@ -15,14 +15,20 @@ struct Args {
     #[clap(short, long, default_value = "/tmp/gitconfig")]
     file: String,
 
-    #[clap(short, long, default_values = &["app","sandbox", "sandbox-external"])]
+    #[clap(short, long, required = true)]
     base: Vec<String>,
 
-    #[clap(short, long, default_values = &["cirbi", "lb", "longboat"])]
+    #[clap(short, long, default_value = None)]
     include: Vec<String>,
 
-    #[clap(short = 'x', long, default_values = &["lb1"])]
+    #[clap(short = 'x', long, default_value = None)]
     exclude: Vec<String>,
+
+    #[clap(short, long, default_values = &["infra"])]
+    profiles: Vec<String>,
+
+    #[clap(short, long, default_values = &["eu-central-1", "us-east-2"])]
+    regions: Vec<String>,
 
     #[clap(short, long, default_value = "anton.sidorov@advarra.com")]
     email: String,
@@ -39,30 +45,14 @@ async fn main() -> io::Result<()> {
 
     let mut file = File::create(&args.file)?;
 
-    for u in args.base.iter() {
-        writeln!(
-            file,
-            "[credential \"https://git-codecommit.eu-central-1.amazonaws.com/v1/repos/{}.git\"]",
-            u
-        )?;
-        writeln!(
-            file,
-            "\thelper = !aws codecommit credential-helper $@ --profile cloud-prod-controlplane"
-        )?;
-        writeln!(file, "\tuseHttpPath = true")?;
-    }
+    let mut include = args.include.clone();
+    include.extend(args.base.clone());
 
-    let profiles = ["cloud-prod-controlplane", "infra"];
-    let regions = ["eu-central-1", "us-east-2"];
-
-    //let in_ = vec!["-cirbi", "-lb", "longboat"];
-    //let out = vec!["lb1"];
-
-    for p in profiles.iter() {
-        for r in regions.iter() {
+    for p in args.profiles.iter() {
+        for r in args.regions.iter() {
             let client = codecommit::initialize_client(r, p).await;
             let repositories =
-                codecommit::list_repositories(&client, &args.include, &args.exclude).await;
+                codecommit::list_repositories(&client, &include, &args.exclude).await;
             info!("Repositories: {:?}", repositories);
             for u in repositories.unwrap() {
                 writeln!(
