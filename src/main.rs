@@ -1,103 +1,68 @@
 use clap::Parser;
 use log::info;
+use std::fs::File;
+use std::io::{self, Write};
 use std::process::Command;
-mod helpers;
+mod codecommit;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 #[clap(
-    version = "v0.1.2",
+    version = "v0.0.1",
     author = "Anton Sidorov tonysidrock@gmail.com",
     about = "Counts wwords frequency in a text file"
 )]
 struct Args {
-    #[clap(short, long, default_value = "auth")]
-    service: String,
-
-    #[clap(short, long, default_value = "app")]
-    cluster: String,
-
-    #[clap(short, long, default_value = "eu-central-1")]
-    region: String,
-
-    #[clap(short, long, default_value = "default")]
-    profile: String,
-
-    #[clap(short, long)]
-    exec: Option<String>,
-
-    #[clap(short, long)]
-    instance: Option<String>,
+    #[clap(short, long, default_value = "/tmp/gitconfig")]
+    file: String,
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> io::Result<()> {
     env_logger::init();
 
     let args = Args::parse();
 
-    let mut command = format!(
-        "command=sudo docker exec -ti $(sudo docker ps -qf name={} | head -n1) /bin/bash",
-        &args.service
-    );
+    let mut file = File::create("/tmp/gitconfig")?;
 
-    if let Some(exec) = args.exec {
-        command = format!(
-            "command=sudo docker exec -ti $(sudo docker ps -qf name={} | head -n1) /bin/bash -lc {}",
-            &args.service, exec
-        );
+    for u in ["app", "sandbox", "sandbox-external"].iter() {
+        writeln!(file, "[credential \"https://git-codecommit.eu-central-1.amazonaws.com/v1/repos/{}.git\"]\n  helper = !aws codecommit credential-helper $@ --profile cloud-prod-controlplane\n  useHttpPath = true", u)?;
     }
 
-    let ecs_client = helpers::initialize_client(&args.region, &args.profile).await;
-    let instance_id;
+    let profiles = ["cloud-prod-controlplane", "infra"];
+    let regions = ["eu-central-1", "us-east-2"];
 
-    match args.instance {
-        Some(instance) => {
-            command = "command=sudo su -".to_string();
-            instance_id = instance;
-        }
-        None => {
-            let service_arn =
-                helpers::get_service_arn(&ecs_client, &args.cluster, &args.service).await?;
+    for p in profiles.iter() {
+        for r in regions.iter() {
+            let output = Command::new("aws")
+                .arg("codecommit")
+                .arg("list-repositories")
+                .arg("--region")
+                .arg(r)
+                .arg("--profile")
+                .arg(p)
+                .arg("--query")
+                .arg("repositories[?contains(repositoryName,`-cirbi`) || contains(repositoryName,`-lb`) || contains(repositoryName,`longboat`)].repositoryName")
+                .arg("--output")
+                .arg("text")
+                .output()
+                .expect("failed to execute process");
 
-            info!("Service ARN: {}", service_arn);
-
-            let task_arn = helpers::get_task_arn(&ecs_client, &args.cluster, &service_arn).await?;
-
-            info!("Task ARN: {}", task_arn);
-
-            let task_instance_arn =
-                helpers::get_task_container_arn(&ecs_client, &args.cluster, &task_arn).await?;
-            info!("Task Instance ARN: {:?}", task_instance_arn);
-
-            instance_id =
-                helpers::get_container_arn(&ecs_client, &args.cluster, &task_instance_arn).await?;
-            info!("Instance ID: {:?}", instance_id);
+            let repositories = String::from_utf8_lossy(&output.stdout);
+            for u in repositories.lines() {
+                writeln!(file, "[credential \"https://git-codecommit.{}.amazonaws.com/v1/repos/{}.git\"]\n  helper = !aws codecommit credential-helper $@ --profile {}\n  useHttpPath = true", r, u, p)?;
+            }
         }
     }
 
-    println!(
-        "Service {} is running on instance {}",
-        &args.service, instance_id
-    );
-
-    let mut ssm_session = Command::new("aws")
-        .arg("ssm")
-        .arg("start-session")
-        .arg("--region")
-        .arg(&args.region)
-        .arg("--target")
-        .arg(instance_id)
-        .arg("--document-name")
-        .arg("AWS-StartInteractiveCommand")
-        .arg("--parameters")
-        .arg("--profile")
-        .arg(&args.profile)
-        .arg(command)
-        .spawn()
-        .expect("Failed to start ssm session");
-
-    let _ = ssm_session.wait().expect("Failed to wait for ssm session");
+    writeln!(
+        file,
+        "[credential]\n  helper = !aws codecommit credential-helper $@\n  UseHttpPath = true"
+    )?;
+    writeln!(
+        file,
+        "[user]\n  email = anton.sidorov@advarra.com\n  name = Anton Sidorov"
+    )?;
 
     Ok(())
 }
