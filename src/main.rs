@@ -79,7 +79,7 @@ async fn main() -> io::Result<()> {
 
     for profile in args.profiles.iter() {
         for region in args.regions.iter() {
-            let client = codecommit::initialize_client(&region, &profile).await;
+            let client = codecommit::initialize_client(region, profile).await;
             let base_repositories =
                 codecommit::list_exact_repositories(&client, &args.base, &args.exclude).await;
             info!("Base repositories: {:?}", base_repositories);
