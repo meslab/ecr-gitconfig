@@ -2,8 +2,9 @@ use clap::Parser;
 use log::info;
 use std::fs::File;
 use std::io::{self, Write};
+use std::path::Path;
 mod codecommit;
-use git2::Config;
+use git2::{Config, ConfigLevel};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -63,7 +64,8 @@ async fn main() -> io::Result<()> {
 
     let args = Args::parse();
 
-    let cfg = Config::open_default().unwrap();
+    let mut cfg = Config::open_default().unwrap();
+    let _ = cfg.add_file(Path::new(&args.file), ConfigLevel::Local, true);
     let binding = cfg.get_string("user.name").unwrap();
     let username = match &args.name {
         Some(name) => name,
