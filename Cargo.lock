@@ -583,7 +583,7 @@ dependencies = [
 
 [[package]]
 name = "ecr-gitconfig"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aws-config",
  "aws-sdk-codecommit",
