@@ -1,9 +1,9 @@
+use ecr_gitconfig::codecommit;
 use clap::Parser;
 use log::info;
 use std::fs::File;
 use std::io::{self, Write};
 use std::path::Path;
-mod codecommit;
 use git2::{Config, ConfigLevel};
 
 #[derive(Parser)]
